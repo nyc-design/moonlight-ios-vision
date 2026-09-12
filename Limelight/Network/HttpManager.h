@@ -31,6 +31,8 @@
 - (NSURLRequest*) newLaunchOrResumeRequest:(NSString*)verb config:(StreamConfiguration*)config;
 - (NSURLRequest*) newQuitAppRequest;
 - (NSURLRequest*) newAppAssetRequestWithAppId:(NSString*)appId;
+- (BOOL) hasServerCert;
+- (void) cancelRequests;
 - (void) executeRequestSynchronously:(HttpRequest*)request;
 
 @end

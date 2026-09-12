@@ -29,7 +29,13 @@
     return self;
 }
 
+- (void) cancel {
+    [super cancel];
+    [_httpManager cancelRequests];
+}
+
 - (void) main {
+    if (self.isCancelled) { return; }
     // We have to call startPairing before calling any other _callback functions
     NSString* PIN = [self generatePIN];
     [_callback startPairing:PIN];
@@ -37,8 +43,16 @@
     ServerInfoResponse* serverInfoResp = [[ServerInfoResponse alloc] init];
     [_httpManager executeRequestSynchronously:[HttpRequest requestForResponse:serverInfoResp withUrlRequest:[_httpManager newServerInfoRequest:false]
                                                fallbackError:401 fallbackRequest:[_httpManager newHttpServerInfoRequest]]];
+    if (self.isCancelled) { return; }
     if ([serverInfoResp isStatusOk]) {
-        if (![[serverInfoResp getStringTag:@"PairStatus"] isEqual:@"1"]) {
+        BOOL serverPaired = [[serverInfoResp getStringTag:@"PairStatus"] isEqual:@"1"];
+        if (!serverPaired || ![_httpManager hasServerCert]) {
+            // A previous attempt can finish on the PC before this app saves its certificate.
+            // Repair only that incomplete client pairing, never a valid saved pairing.
+            if (serverPaired) {
+                [_httpManager executeRequestSynchronously:[HttpRequest requestWithUrlRequest:[_httpManager newUnpairRequest]]];
+                if (self.isCancelled) { return; }
+            }
             NSString* appversion = [serverInfoResp getStringTag:@"appversion"];
             if (appversion == nil) {
                 [_callback pairFailed:@"Missing XML element"];
@@ -68,7 +82,7 @@
         errorMsg = resp.statusMessage;
     }
     
-    [_callback pairFailed:errorMsg];
+    if (!self.isCancelled) { [_callback pairFailed:errorMsg]; }
 }
 
 - (void) finishPairing:(UIBackgroundTaskIdentifier)bgId withSuccess:(NSData*)derCertBytes {
@@ -76,7 +90,7 @@
         [[UIApplication sharedApplication] endBackgroundTask:bgId];
     }
     
-    [_callback pairSuccessful:derCertBytes];
+    if (!self.isCancelled) { [_callback pairSuccessful:derCertBytes]; }
 }
 
 // All codepaths must call finishPairing exactly once before returning!

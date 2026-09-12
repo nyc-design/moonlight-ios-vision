@@ -23,6 +23,8 @@
 #define EXTRA_LONG_TIMEOUT_SEC 180
 
 @implementation HttpManager {
+    BOOL _requestsCancelled;
+    NSURLSession* _activeSession;
     NSString* _urlSafeHostName;
     NSString* _baseHTTPURL;
     NSString* _uniqueId;
@@ -105,7 +107,23 @@
     return YES;
 }
 
+- (BOOL) hasServerCert { return _serverCert != nil; }
+
+- (void) cancelRequests {
+    @synchronized (self) {
+        _requestsCancelled = YES;
+        [_activeSession invalidateAndCancel];
+    }
+}
+
 - (void) executeRequestSynchronously:(HttpRequest*)request {
+    @synchronized (self) {
+        if (_requestsCancelled) {
+            request.response.statusCode = NSURLErrorCancelled;
+            request.response.statusMessage = @"Cancelled";
+            return;
+        }
+    }
     // This is a special case to handle failure of HTTPS port fetching
     if (!request.request) {
         if (request.response) {
@@ -122,6 +140,10 @@
     
     Log(LOG_D, @"Making Request: %@", request);
     NSURLSession* urlSession = [NSURLSession sessionWithConfiguration:[NSURLSessionConfiguration ephemeralSessionConfiguration] delegate:self delegateQueue:nil];
+    @synchronized (self) {
+        if (_requestsCancelled) { [urlSession invalidateAndCancel]; return; }
+        _activeSession = urlSession;
+    }
     [[urlSession dataTaskWithRequest:request.request completionHandler:^(NSData * __nullable data, NSURLResponse * __nullable response, NSError * __nullable error) {
         
         if (error != NULL) {
@@ -146,6 +168,7 @@
     
     dispatch_semaphore_wait(requestLock, DISPATCH_TIME_FOREVER);
     [urlSession invalidateAndCancel];
+    @synchronized (self) { if (_activeSession == urlSession) { _activeSession = nil; } }
     
     if (!respError && request.response) {
         [request.response populateWithData:requestResp];
