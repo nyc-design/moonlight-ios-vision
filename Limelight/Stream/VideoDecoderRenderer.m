@@ -563,8 +563,9 @@ int DrSubmitDecodeUnit(PDECODE_UNIT decodeUnit);
     }
     
     // Check for previous decoder errors before doing anything
-    if ([self sink].status == AVQueuedSampleBufferRenderingStatusFailed) {
-        Log(LOG_E, @"Display layer rendering failed: %@", [self sink].error);
+    // Both sink classes have status/error; the protocol doesn't declare them, hence `id`.
+    if ([(id)[self sink] status] == AVQueuedSampleBufferRenderingStatusFailed) {
+        Log(LOG_E, @"Display layer rendering failed: %@", [(id)[self sink] error]);
         
         // Recreate the display layer. We are already on the main thread,
         // so this is safe to do right here.
