@@ -43,6 +43,7 @@
 }
 
 - (void)main {
+    if (self.isCancelled) { return; }
     [CryptoManager generateKeyPairUsingSSL];
     
     HttpManager* hMan = [[HttpManager alloc] initWithAddress:_config.host httpsPort:_config.httpsPort
@@ -51,6 +52,7 @@
     ServerInfoResponse* serverInfoResp = [[ServerInfoResponse alloc] init];
     [hMan executeRequestSynchronously:[HttpRequest requestForResponse:serverInfoResp withUrlRequest:[hMan newServerInfoRequest:false]
                                        fallbackError:401 fallbackRequest:[hMan newHttpServerInfoRequest]]];
+    if (self.isCancelled) { return; }
     NSString* pairStatus = [serverInfoResp getStringTag:@"PairStatus"];
     NSString* appversion = [serverInfoResp getStringTag:@"appversion"];
     NSString* gfeVersion = [serverInfoResp getStringTag:@"GfeVersion"];
@@ -104,6 +106,7 @@
     
     // Initializing the renderer must be done on the main thread
     dispatch_async(dispatch_get_main_queue(), ^{
+        if (self.isCancelled) { return; }
         id<AnyVideoDecoderRenderer> __strong renderer = self->_rendererProvider();
 //        VideoDecoderRenderer* renderer = [[VideoDecoderRenderer alloc] initWithView:self->_renderView callbacks:self->_callbacks streamAspectRatio:(float)self->_config.width / (float)self->_config.height useFramePacing:self->_config.useFramePacing];
         self->_connection = [[Connection alloc] initWithConfig:self->_config renderer:renderer connectionCallbacks:self->_callbacks];
@@ -116,11 +119,13 @@
 
 - (void) stopStream
 {
+    [self cancel];
     [_connection terminate];
 }
 
 - (void) stopStreamWithCompletion:(void (^)(void))completion
 {
+    [self cancel];
     if (!_connection) {
         if (completion) {
             dispatch_async(dispatch_get_main_queue(), ^{ completion(); });
