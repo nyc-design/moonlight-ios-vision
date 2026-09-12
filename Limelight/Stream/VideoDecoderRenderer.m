@@ -26,6 +26,7 @@ extern int ff_isom_write_av1c(AVIOContext *pb, const uint8_t *buf, int size,
     float _streamAspectRatio;
     
     AVSampleBufferDisplayLayer* displayLayer;
+    id<AVQueuedSampleBufferRendering> _externalSink;   // Vision Villa: set instead of a display layer
     int videoFormat;
     int frameRate;
     
@@ -42,6 +43,17 @@ extern int ff_isom_write_av1c(AVIOContext *pb, const uint8_t *buf, int size,
 
 - (void)reinitializeDisplayLayer
 {
+    if (_externalSink != nil) {
+        // Nothing to rebuild: the sink is owned by the caller. Drop queued frames and the
+        // format so the next IDR frame starts the decoder cleanly.
+        [_externalSink flush];
+        if (formatDesc != nil) {
+            CFRelease(formatDesc);
+            formatDesc = nil;
+        }
+        return;
+    }
+
     CALayer *oldLayer = displayLayer;
     
     displayLayer = [[AVSampleBufferDisplayLayer alloc] init];
@@ -98,6 +110,25 @@ extern int ff_isom_write_av1c(AVIOContext *pb, const uint8_t *buf, int size,
     [self reinitializeDisplayLayer];
     
     return self;
+}
+
+- (id)initWithSampleBufferSink:(id<AVQueuedSampleBufferRendering>)sink callbacks:(id<ConnectionCallbacks>)callbacks useFramePacing:(BOOL)useFramePacing
+{
+    self = [super init];
+
+    _externalSink = sink;
+    _callbacks = callbacks;
+    _streamAspectRatio = 16.0f / 9.0f;
+    framePacing = useFramePacing;
+
+    parameterSetBuffers = [[NSMutableArray alloc] init];
+
+    return self;
+}
+
+- (id<AVQueuedSampleBufferRendering>)sink
+{
+    return _externalSink != nil ? _externalSink : displayLayer;
 }
 
 - (void)setupWithVideoFormat:(int)videoFormat width:(int)videoWidth height:(int)videoHeight frameRate:(int)frameRate
@@ -532,8 +563,8 @@ int DrSubmitDecodeUnit(PDECODE_UNIT decodeUnit);
     }
     
     // Check for previous decoder errors before doing anything
-    if (displayLayer.status == AVQueuedSampleBufferRenderingStatusFailed) {
-        Log(LOG_E, @"Display layer rendering failed: %@", displayLayer.error);
+    if ([self sink].status == AVQueuedSampleBufferRenderingStatusFailed) {
+        Log(LOG_E, @"Display layer rendering failed: %@", [self sink].error);
         
         // Recreate the display layer. We are already on the main thread,
         // so this is safe to do right here.
@@ -610,8 +641,18 @@ int DrSubmitDecodeUnit(PDECODE_UNIT decodeUnit);
         return DR_NEED_IDR;
     }
 
+    if (_externalSink != nil) {
+        // Our sinks have no stream-relative timebase: show each frame as soon as it's decoded,
+        // which is exactly what the display layer ends up doing with these timestamps anyway.
+        CFArrayRef attachments = CMSampleBufferGetSampleAttachmentsArray(sampleBuffer, true);
+        if (attachments != NULL && CFArrayGetCount(attachments) > 0) {
+            CFMutableDictionaryRef dict = (CFMutableDictionaryRef)CFArrayGetValueAtIndex(attachments, 0);
+            CFDictionarySetValue(dict, kCMSampleAttachmentKey_DisplayImmediately, kCFBooleanTrue);
+        }
+    }
+
     // Enqueue the next frame
-    [self->displayLayer enqueueSampleBuffer:sampleBuffer];
+    [[self sink] enqueueSampleBuffer:sampleBuffer];
     
     if (du->frameType == FRAME_TYPE_IDR) {
         // Ensure the layer is visible now
